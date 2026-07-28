@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cyberpunk Life RPG - Gamified Life System</title>
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Supabase JS Client (رابط واحد فقط، تم حذف الرابط المكسور المكرر) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&family=Orbitron:wght@600;800;900&display=swap" rel="stylesheet">
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Tajawal', 'sans-serif'],
+            orbitron: ['Orbitron', 'sans-serif'],
+          },
+          colors: {
+            cyber: {
+              bg: '#070a12',
+              card: 'rgba(15, 23, 42, 0.75)',
+              border: '#1e293b',
+              cyan: '#00f0ff',
+              magenta: '#ff007f',
+              yellow: '#ffe600',
+              green: '#00ff66',
+              purple: '#9d00ff'
+            }
+          },
+          boxShadow: {
+            'neon-cyan': '0 0 15px rgba(0, 240, 255, 0.4), inset 0 0 10px rgba(0, 240, 255, 0.2)',
+            'neon-magenta': '0 0 15px rgba(255, 0, 127, 0.4), inset 0 0 10px rgba(255, 0, 127, 0.2)',
+            'neon-green': '0 0 15px rgba(0, 255, 102, 0.4), inset 0 0 10px rgba(0, 255, 102, 0.2)',
+            'neon-purple': '0 0 20px rgba(157, 0, 255, 0.5)'
+          }
+        }
+      }
+    }
+  </script>
+
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="font-sans min-h-screen flex flex-col justify-between selection:bg-cyber-cyan selection:text-black">
+
+  <canvas id="particle-canvas"></canvas>
+
+  <!-- Level Up Modal Overlay -->
+  <div id="level-up-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/85 backdrop-blur-md p-4">
+    <div class="relative glass-card border-2 border-cyber-cyan p-8 rounded-2xl shadow-neon-cyan max-w-sm w-full text-center overflow-hidden transform transition-all scale-95 animate-bounce-short">
+      <div class="absolute -top-12 left-1/2 -translate-x-1/2 w-40 h-40 bg-cyber-cyan/20 rounded-full blur-3xl pointer-events-none"></div>
+
+      <i class="fa-solid fa-angles-up text-4xl text-cyber-cyan mb-2 animate-pulse"></i>
+      <h2 class="text-xs font-black tracking-widest uppercase text-cyber-cyan font-orbitron mb-1">SYSTEM UPGRADE COMPLETE</h2>
+      <h1 class="text-4xl font-black italic text-white tracking-wide mb-4 font-orbitron drop-shadow-[0_0_10px_#00f0ff]">LEVEL UP!</h1>
+
+      <div class="my-4 relative inline-block">
+        <span id="modal-new-level" class="text-7xl font-black font-orbitron text-transparent bg-clip-text bg-gradient-to-r from-cyber-cyan via-white to-cyber-magenta">15</span>
+      </div>
+
+      <p class="text-slate-300 text-sm mb-6">تم فتح قدرات ومكافآت جديدة! تم زيادة جميع المؤشرات الأساسية بنجاح.</p>
+
+      <button onclick="closeLevelUpModal()" class="w-full py-3 bg-gradient-to-r from-cyber-cyan to-blue-600 font-black text-black rounded-xl hover:brightness-125 transition shadow-neon-cyan active:scale-95 font-orbitron">
+        استلام المكافآت <i class="fa-solid fa-trophy mr-1"></i>
+      </button>
+    </div>
+  </div>
+
+  <!-- Main Layout -->
+  <div class="flex-1 flex flex-col md:flex-row">
+
+    <!-- Sidebar Navigation (Desktop) -->
+    <aside class="hidden md:flex flex-col w-64 border-l border-cyber-border bg-cyber-bg/90 p-5 space-y-8 sticky top-0 h-screen z-30">
+      <div class="flex items-center space-x-3 space-x-reverse">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyber-cyan to-cyber-magenta flex items-center justify-center shadow-neon-cyan">
+          <i class="fa-solid fa-gamepad text-black text-xl"></i>
+        </div>
+        <div>
+          <h1 class="font-orbitron font-extrabold text-lg tracking-wider text-white">LIFE<span class="text-cyber-cyan">RPG</span></h1>
+          <p class="text-[10px] text-slate-500 font-mono">v2.0 CYBER_CORE</p>
+        </div>
+      </div>
+
+      <nav class="flex-1 space-y-2">
+        <button onclick="switchTab('dashboard')" id="nav-dashboard" class="nav-btn w-full flex items-center space-x-3 space-x-reverse px-4 py-3 rounded-xl font-bold text-sm text-cyber-cyan bg-cyber-cyan/10 border border-cyber-cyan/30 transition">
+          <i class="fa-solid fa-chart-pie w-5"></i>
+          <span>لوحة التحكم</span>
+        </button>
+        <button onclick="switchTab('quests')" id="nav-quests" class="nav-btn w-full flex items-center space-x-3 space-x-reverse px-4 py-3 rounded-xl font-bold text-sm text-slate-400 hover:text-white hover:bg-slate-800/50 transition">
+          <i class="fa-solid fa-scroll w-5"></i>
+          <span>المهام (Quests)</span>
+        </button>
+        <button onclick="switchTab('skills')" id="nav-skills" class="nav-btn w-full flex items-center space-x-3 space-x-reverse px-4 py-3 rounded-xl font-bold text-sm text-slate-400 hover:text-white hover:bg-slate-800/50 transition">
+          <i class="fa-solid fa-bolt w-5"></i>
+          <span>المهارات (Skills)</span>
+        </button>
+        <button onclick="switchTab('boss')" id="nav-boss" class="nav-btn w-full flex items-center space-x-3 space-x-reverse px-4 py-3 rounded-xl font-bold text-sm text-slate-400 hover:text-white hover:bg-slate-800/50 transition">
+          <i class="fa-solid fa-skull w-5 text-red-500"></i>
+          <span>معارك الزعماء</span>
+        </button>
+        <button onclick="switchTab('settings')" id="nav-settings" class="nav-btn w-full flex items-center space-x-3 space-x-reverse px-4 py-3 rounded-xl font-bold text-sm text-slate-400 hover:text-white hover:bg-slate-800/50 transition">
+          <i class="fa-solid fa-database w-5 text-cyber-yellow"></i>
+          <span>إعدادات Supabase</span>
+        </button>
+      </nav>
+
+      <div class="glass-card p-3 rounded-xl flex items-center space-x-3 space-x-reverse border-cyber-border">
+        <div class="w-10 h-10 rounded-full bg-slate-800 border border-cyber-cyan flex items-center justify-center text-cyber-cyan font-bold font-orbitron">
+          A1
+        </div>
+        <div class="overflow-hidden">
+          <h4 class="text-xs font-bold truncate text-white" id="sidebar-username">CYBER_PLAYER</h4>
+          <span class="text-[10px] text-cyber-cyan font-mono" id="sidebar-level-text">LVL 14 AGENT</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="flex-1 p-4 md:p-8 space-y-6 max-w-7xl mx-auto w-full pb-28 md:pb-8">
+
+      <!-- Top Mobile Bar -->
+      <div class="flex md:hidden items-center justify-between glass-card p-4 rounded-2xl mb-4 border-cyber-border">
+        <div class="flex items-center space-x-3 space-x-reverse">
+          <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyber-cyan to-cyber-magenta flex items-center justify-center text-black font-bold">
+            <i class="fa-solid fa-gamepad"></i>
+          </div>
+          <div>
+            <h1 class="font-orbitron font-black text-base text-white">LIFE<span class="text-cyber-cyan">RPG</span></h1>
+          </div>
+        </div>
+        <div class="flex items-center space-x-2 space-x-reverse bg-amber-500/10 border border-amber-500/30 px-3 py-1 rounded-full text-amber-400 text-xs font-bold">
+          <i class="fa-solid fa-fire text-amber-500"></i>
+          <span id="mobile-streak-count">7 أيام</span>
+        </div>
+      </div>
+
+      <!-- TAB 1: DASHBOARD -->
+      <section id="tab-dashboard" class="tab-content space-y-6">
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div class="lg:col-span-2 glass-card p-6 rounded-2xl relative overflow-hidden flex flex-col justify-between shadow-lg">
+            <div class="absolute -top-10 -left-10 w-40 h-40 bg-cyber-cyan/10 rounded-full blur-3xl pointer-events-none"></div>
+
+            <div class="flex flex-wrap justify-between items-center gap-4 mb-6">
+              <div class="flex items-center space-x-4 space-x-reverse">
+                <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-slate-800 to-slate-900 border-2 border-cyber-cyan flex items-center justify-center shadow-neon-cyan relative">
+                  <i class="fa-solid fa-user-ninja text-3xl text-cyber-cyan"></i>
+                  <span class="absolute -bottom-2 -right-2 bg-cyber-magenta text-white font-orbitron text-[10px] font-black px-1.5 py-0.5 rounded border border-black" id="hero-lvl-badge">LVL 14</span>
+                </div>
+                <div>
+                  <span class="text-xs text-cyber-cyan font-mono uppercase tracking-widest">المقاتل النشط</span>
+                  <h2 class="text-2xl font-black text-white" id="hero-username">CYBER_PLAYER</h2>
+                  <p class="text-xs text-slate-400">Class: Life Strategist</p>
+                </div>
+              </div>
+
+              <div class="flex items-center space-x-3 space-x-reverse bg-amber-500/10 border border-amber-500/30 px-4 py-2 rounded-2xl">
+                <i class="fa-solid fa-fire text-2xl text-amber-500 animate-pulse"></i>
+                <div>
+                  <div class="text-[10px] text-amber-400/80 font-bold uppercase">المواظبة اليومية</div>
+                  <div class="text-lg font-black text-amber-400 font-orbitron" id="hero-streak">7 DAYS</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="space-y-2">
+              <div class="flex justify-between items-center text-xs font-mono">
+                <span class="text-slate-400">النقاط الحالية (XP Progress)</span>
+                <span class="text-cyber-cyan font-bold font-orbitron" id="xp-text-counter">3,200 / 4,000 XP</span>
+              </div>
+              <div class="w-full bg-slate-950 h-4 rounded-full p-0.5 border border-slate-800 relative overflow-hidden">
+                <div id="xp-bar-fill" class="h-full bg-gradient-to-r from-cyber-cyan via-blue-500 to-cyber-magenta rounded-full transition-all duration-500 shadow-[0_0_12px_#00f0ff]" style="width: 80%;"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="glass-card p-6 rounded-2xl border-red-500/30 bg-gradient-to-br from-red-950/20 via-slate-900/40 to-cyber-bg flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between text-red-400 mb-3">
+                <span class="text-xs font-extrabold font-orbitron uppercase tracking-wider flex items-center gap-2">
+                  <i class="fa-solid fa-skull"></i> زعيم المرحلة الحالية
+                </span>
+                <span class="text-[10px] bg-red-500/20 px-2 py-0.5 rounded text-red-300 font-mono">MAIN QUEST</span>
+              </div>
+              <h3 class="text-xl font-black text-white mb-2">إطلاق المشروع الجديد</h3>
+              <p class="text-xs text-slate-400 leading-relaxed mb-4">إنهاء الكود المصدري ورفعه للإنتاج مع إغلاق كافة الأخطاء البرمجية.</p>
+            </div>
+
+            <div class="space-y-3">
+              <div class="flex justify-between text-xs font-mono">
+                <span class="text-slate-400">صحة الزعيم (HP)</span>
+                <span class="text-red-400 font-bold">2,500 / 10,000 HP</span>
+              </div>
+              <div class="w-full bg-slate-950 h-2.5 rounded-full overflow-hidden border border-slate-800">
+                <div class="bg-red-600 h-full rounded-full" style="width: 25%;"></div>
+              </div>
+              <button onclick="switchTab('boss')" class="w-full py-2.5 bg-red-600/20 hover:bg-red-600 border border-red-500 text-red-200 hover:text-white transition rounded-xl text-xs font-bold uppercase tracking-wider font-orbitron">
+                دخول غرفة المعركة <i class="fa-solid fa-arrow-left mr-1"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div class="flex justify-between items-center mb-4">
+            <h3 class="text-sm font-extrabold text-slate-400 font-orbitron uppercase tracking-wider">مهارات الشخصية (Skills Overview)</h3>
+            <button onclick="switchTab('skills')" class="text-xs text-cyber-cyan hover:underline font-bold">عرض الكل</button>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" id="dashboard-skills-grid"></div>
+        </div>
+
+        <div>
+          <div class="flex justify-between items-center mb-4">
+            <h3 class="text-sm font-extrabold text-slate-400 font-orbitron uppercase tracking-wider">مهام اليوم السريعة</h3>
+            <button onclick="switchTab('quests')" class="text-xs text-cyber-cyan hover:underline font-bold">إدارة المهام</button>
+          </div>
+          <div class="space-y-3" id="dashboard-quests-list"></div>
+        </div>
+
+      </section>
+
+      <!-- TAB 2: QUESTS -->
+      <section id="tab-quests" class="tab-content hidden space-y-6">
+        <div class="flex flex-wrap justify-between items-center gap-4">
+          <div>
+            <h2 class="text-2xl font-black text-white font-orbitron">لوحة المهام (QUEST SYSTEM)</h2>
+            <p class="text-xs text-slate-400">قم بإنجاز المهام اليومية والأسبوعية لزيادة نقاط خبرتك</p>
+          </div>
+
+          <button onclick="toggleNewQuestForm()" class="px-5 py-2.5 bg-cyber-cyan text-black font-bold text-xs rounded-xl hover:brightness-125 shadow-neon-cyan transition font-orbitron">
+            <i class="fa-solid fa-plus ml-1"></i> إضافة مهمة جديدة
+          </button>
+        </div>
+
+        <div id="new-quest-form" class="hidden glass-card p-5 rounded-2xl border-cyber-cyan/50 space-y-4">
+          <h3 class="text-sm font-bold text-cyber-cyan">إنشاء مهمة جديدة</h3>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <input type="text" id="quest-input-title" placeholder="عنوان المهمة..." class="sm:col-span-2 bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-cyber-cyan outline-none">
+            <input type="number" id="quest-input-xp" placeholder="مكافأة XP (مثال: 150)" class="bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-cyber-cyan outline-none">
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <select id="quest-input-skill" class="bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-cyber-cyan outline-none">
+              <option value="Intelligence">الذكاء (Intelligence)</option>
+              <option value="Fitness">اللياقة (Fitness)</option>
+              <option value="Wealth">المال (Wealth)</option>
+              <option value="Learning">التعلم (Learning)</option>
+            </select>
+            <select id="quest-input-type" class="bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-cyber-cyan outline-none">
+              <option value="daily">مهمة يومية (Daily)</option>
+              <option value="weekly">مهمة أسبوعية (Weekly)</option>
+              <option value="main">مهمة رئيسية (Main)</option>
+            </select>
+          </div>
+          <div class="flex justify-end space-x-2 space-x-reverse">
+            <button onclick="toggleNewQuestForm()" class="px-4 py-2 bg-slate-800 text-slate-300 text-xs rounded-xl hover:bg-slate-700">إلغاء</button>
+            <button onclick="createNewQuest()" class="px-5 py-2 bg-cyber-cyan text-black font-bold text-xs rounded-xl hover:brightness-110">حفظ المهمة</button>
+          </div>
+        </div>
+
+        <div class="space-y-4" id="all-quests-container"></div>
+      </section>
+
+      <!-- TAB 3: SKILLS -->
+      <section id="tab-skills" class="tab-content hidden space-y-6">
+        <div>
+          <h2 class="text-2xl font-black text-white font-orbitron">مصفوفة المهارات (SKILLS MATRIX)</h2>
+          <p class="text-xs text-slate-400">تطور مهاراتك الواقعية يرفعه النظام تلقائياً حسب نوع المهام المنجزة</p>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6" id="skills-full-grid"></div>
+      </section>
+
+      <!-- TAB 4: BOSS FIGHT -->
+      <section id="tab-boss" class="tab-content hidden space-y-6">
+        <div>
+          <h2 class="text-2xl font-black text-red-500 font-orbitron">معارك الزعماء (BOSS FIGHTS)</h2>
+          <p class="text-xs text-slate-400">الأهداف الكبيرة في حياتك تجسد كأعداء أقوياء يتطلب إسقاطهم استمراريتك</p>
+        </div>
+
+        <div class="glass-card p-8 rounded-3xl border-2 border-red-600/40 bg-gradient-to-b from-red-950/30 to-cyber-bg text-center space-y-6 relative overflow-hidden">
+          <div class="w-32 h-32 mx-auto rounded-3xl bg-red-950/50 border-2 border-red-500 flex items-center justify-center text-red-500 text-6xl shadow-[0_0_30px_rgba(239,68,68,0.3)] animate-glow">
+            <i class="fa-solid fa-dragon"></i>
+          </div>
+
+          <div>
+            <span class="text-xs text-red-400 font-mono tracking-widest uppercase">STAGE BOSS LVL 50</span>
+            <h3 class="text-3xl font-black text-white mt-1">المشروع المستقبلي (Project Release)</h3>
+            <p class="text-sm text-slate-400 max-w-lg mx-auto mt-2">قم بإنهاء كافة مراحل التطوير والتصميم واختبار الأخطاء قبل موعد الإطلاق المحدد.</p>
+          </div>
+
+          <div class="max-w-xl mx-auto space-y-2">
+            <div class="flex justify-between text-xs font-mono">
+              <span class="text-slate-400">BOSS HEALTH</span>
+              <span class="text-red-400 font-bold" id="boss-hp-text">7,500 / 10,000 HP</span>
+            </div>
+            <div class="w-full bg-slate-950 h-5 rounded-full overflow-hidden border border-red-900/50 p-0.5">
+              <div id="boss-hp-bar" class="bg-gradient-to-r from-red-800 to-red-500 h-full rounded-full transition-all duration-300" style="width: 75%;"></div>
+            </div>
+          </div>
+
+          <div class="pt-4">
+            <button onclick="attackBoss(500)" class="px-8 py-3 bg-gradient-to-r from-red-600 to-orange-600 font-black text-white rounded-xl shadow-[0_0_20px_rgba(220,38,38,0.4)] hover:brightness-125 transition font-orbitron active:scale-95">
+              <i class="fa-solid fa-burst ml-2"></i> توجيه ضربة (إنجاز جزء من الهدف)
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 5: SUPABASE SETTINGS -->
+      <section id="tab-settings" class="tab-content hidden space-y-6">
+        <div>
+          <h2 class="text-2xl font-black text-cyber-yellow font-orbitron">إعدادات SUPABASE (BACKEND CONNECT)</h2>
+          <p class="text-xs text-slate-400">تُقرأ بيانات الاتصال تلقائياً من ملف script.js (متغير CONFIG). هذه الحقول اختيارية لتجربة اتصال بمشروع آخر مؤقتاً بدون تعديل الكود.</p>
+        </div>
+
+        <div class="glass-card p-6 rounded-2xl border-cyber-yellow/40 space-y-5 max-w-2xl">
+          <div class="space-y-2">
+            <label class="text-xs font-bold text-slate-300">SUPABASE PROJECT URL</label>
+            <input type="text" id="supabase-url" placeholder="https://xyzcompany.supabase.co" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:border-cyber-yellow outline-none font-mono">
+          </div>
+
+          <div class="space-y-2">
+            <label class="text-xs font-bold text-slate-300">SUPABASE ANON / PUBLISHABLE KEY</label>
+            <input type="password" id="supabase-key" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:border-cyber-yellow outline-none font-mono">
+          </div>
+
+          <div class="flex items-center justify-between pt-2 flex-wrap gap-3">
+            <span id="supabase-status" class="text-xs font-mono text-slate-500">الحالة: غير متصل (يعمل محلياً)</span>
+            <button onclick="saveSupabaseConfig()" class="px-6 py-2.5 bg-cyber-yellow text-black font-black text-xs rounded-xl hover:brightness-110 font-orbitron transition">
+              حفظ وربط قاعدة البيانات
+            </button>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- Bottom Nav Bar (Mobile Only) -->
+  <nav class="md:hidden fixed bottom-0 left-0 right-0 glass-card border-t border-cyber-border bg-cyber-bg/95 p-3 flex justify-around items-center z-40">
+    <button onclick="switchTab('dashboard')" class="mobile-nav-btn text-cyber-cyan flex flex-col items-center gap-1">
+      <i class="fa-solid fa-chart-pie text-lg"></i>
+      <span class="text-[10px] font-bold">الرئيسية</span>
+    </button>
+    <button onclick="switchTab('quests')" class="mobile-nav-btn text-slate-400 flex flex-col items-center gap-1">
+      <i class="fa-solid fa-scroll text-lg"></i>
+      <span class="text-[10px] font-bold">المهام</span>
+    </button>
+    <button onclick="switchTab('skills')" class="mobile-nav-btn text-slate-400 flex flex-col items-center gap-1">
+      <i class="fa-solid fa-bolt text-lg"></i>
+      <span class="text-[10px] font-bold">المهارات</span>
+    </button>
+    <button onclick="switchTab('boss')" class="mobile-nav-btn text-slate-400 flex flex-col items-center gap-1">
+      <i class="fa-solid fa-skull text-lg"></i>
+      <span class="text-[10px] font-bold">الزعيم</span>
+    </button>
+    <button onclick="switchTab('settings')" class="mobile-nav-btn text-slate-400 flex flex-col items-center gap-1">
+      <i class="fa-solid fa-database text-lg"></i>
+      <span class="text-[10px] font-bold">Supabase</span>
+    </button>
+  </nav>
+
+  <script src="script.js"></script>
+</body>
+</html>
