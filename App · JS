@@ -1,0 +1,533 @@
+/* ==================================================================
+   CYBERPUNK LIFE RPG — APPLICATION LOGIC
+   Structure:
+   1. Default game state
+   2. Local persistence (localStorage) — always-on offline fallback
+   3. Supabase cloud sync (optional, user-configured)
+   4. UI render engine
+   5. Game actions (quests, xp, boss, level up)
+   6. Tab navigation
+   7. Particle fx
+   8. Bootstrapping
+================================================================== */
+ 
+/* ==========================================
+   1. DEFAULT GAME STATE
+========================================== */
+const DEFAULT_STATE = {
+  user: {
+    name: "CYBER_PLAYER",
+    level: 14,
+    xp: 3200,
+    nextLevelXp: 4000,
+    streak: 7
+  },
+  boss: {
+    hp: 7500,
+    maxHp: 10000
+  },
+  skills: [
+    { id: 'Intelligence', name: "الذكاء (Intelligence)", level: 8, xp: 750, maxXp: 1000, icon: "fa-brain", color: "text-cyan-400", border: "border-cyan-400" },
+    { id: 'Fitness', name: "اللياقة البدنية (Fitness)", level: 12, xp: 400, maxXp: 1000, icon: "fa-dumbbell", color: "text-green-400", border: "border-green-400" },
+    { id: 'Wealth', name: "المال والأعمال (Wealth)", level: 5, xp: 900, maxXp: 1000, icon: "fa-wallet", color: "text-amber-400", border: "border-amber-400" },
+    { id: 'Learning', name: "التعلم والتطوير (Learning)", level: 9, xp: 200, maxXp: 1000, icon: "fa-book-open", color: "text-purple-400", border: "border-purple-400" }
+  ],
+  quests: [
+    { id: 1, title: "قراءة 30 دقيقة في كتاب تقني", xp: 250, skill: "Intelligence", type: "daily", completed: false },
+    { id: 2, title: "التمرين الرياضي لمدة 45 دقيقة", xp: 300, skill: "Fitness", type: "daily", completed: false },
+    { id: 3, title: "مراجعة المصاريف الأسبوعية والتخطيط", xp: 400, skill: "Wealth", type: "weekly", completed: false },
+    { id: 4, title: "إكمال دورة معمارية البرمجيات", xp: 800, skill: "Learning", type: "main", completed: false }
+  ]
+};
+ 
+let gameState = JSON.parse(JSON.stringify(DEFAULT_STATE));
+ 
+/* ==========================================
+   2. LOCAL PERSISTENCE
+========================================== */
+const LOCAL_STATE_KEY = 'cyber_rpg_state';
+const LOCAL_SUPA_URL_KEY = 'supabase_url';
+const LOCAL_SUPA_KEY_KEY = 'supabase_key';
+ 
+function loadLocalState() {
+  const raw = localStorage.getItem(LOCAL_STATE_KEY);
+  if (!raw) return;
+  try {
+    gameState = JSON.parse(raw);
+  } catch (e) {
+    console.error("Error parsing local state, falling back to defaults", e);
+  }
+}
+ 
+function persistLocal() {
+  localStorage.setItem(LOCAL_STATE_KEY, JSON.stringify(gameState));
+}
+ 
+/* ==========================================
+   3. SUPABASE CLOUD SYNC
+   Table expected (see supabase-schema.sql):
+     public.game_saves (user_id uuid pk, state jsonb, updated_at timestamptz)
+   Auth: anonymous sign-in, one row per anonymous user id.
+========================================== */
+let supabaseClient = null;
+let supabaseUser = null;
+let syncDebounceTimer = null;
+ 
+function setSyncStatus(mode, text) {
+  const el = document.getElementById('supabase-status');
+  if (!el) return;
+  const colors = {
+    idle: 'text-slate-500',
+    connecting: 'text-amber-400',
+    connected: 'text-green-400',
+    error: 'text-red-400'
+  };
+  el.className = `text-xs font-mono ${colors[mode] || colors.idle}`;
+  el.innerText = text;
+ 
+  const disconnectWrap = document.getElementById('supabase-disconnect-wrap');
+  if (disconnectWrap) {
+    disconnectWrap.classList.toggle('hidden', mode !== 'connected');
+  }
+}
+ 
+function showSyncToast(state) {
+  const toast = document.getElementById('sync-toast');
+  const icon = document.getElementById('sync-toast-icon');
+  const text = document.getElementById('sync-toast-text');
+  if (!toast) return;
+ 
+  const modes = {
+    saving: { icon: 'fa-cloud-arrow-up', color: 'text-cyber-cyan', label: 'جارِ الحفظ...' },
+    saved: { icon: 'fa-cloud-check', color: 'text-green-400', label: 'تم الحفظ سحابياً' },
+    error: { icon: 'fa-triangle-exclamation', color: 'text-red-400', label: 'فشل الحفظ' }
+  };
+  const m = modes[state];
+  if (!m) return;
+ 
+  icon.className = `fa-solid ${m.icon} ${m.color}`;
+  text.innerText = m.label;
+  toast.classList.remove('hidden');
+ 
+  clearTimeout(showSyncToast._t);
+  showSyncToast._t = setTimeout(() => toast.classList.add('hidden'), 1800);
+}
+ 
+async function initSupabase(url, key) {
+  if (!window.supabase) {
+    setSyncStatus('error', 'الحالة: مكتبة Supabase لم تُحمّل 🔴');
+    return;
+  }
+  setSyncStatus('connecting', 'الحالة: جارِ الاتصال...');
+ 
+  try {
+    supabaseClient = window.supabase.createClient(url, key, {
+      auth: { persistSession: true, autoRefreshToken: true }
+    });
+ 
+    // Reuse an existing anonymous session if the browser already has one,
+    // otherwise create a new anonymous user for this device/browser.
+    let { data: { session } } = await supabaseClient.auth.getSession();
+    if (!session) {
+      const { data, error } = await supabaseClient.auth.signInAnonymously();
+      if (error) throw error;
+      session = data.session;
+    }
+    supabaseUser = session.user;
+ 
+    setSyncStatus('connected', `الحالة: متصل بنجاح 🟢 (${supabaseUser.id.slice(0, 8)}...)`);
+ 
+    await pullRemoteState();
+  } catch (err) {
+    console.error("Supabase init error:", err);
+    setSyncStatus('error', 'الحالة: فشل الاتصال 🔴 — تأكد من الرابط والمفتاح وتفعيل Anonymous Sign-ins');
+    supabaseClient = null;
+    supabaseUser = null;
+  }
+}
+ 
+async function pullRemoteState() {
+  if (!supabaseClient || !supabaseUser) return;
+  try {
+    const { data, error } = await supabaseClient
+      .from('game_saves')
+      .select('state')
+      .eq('user_id', supabaseUser.id)
+      .maybeSingle();
+ 
+    if (error) throw error;
+ 
+    if (data && data.state) {
+      // Remote save exists — it becomes the source of truth for this device.
+      gameState = data.state;
+      persistLocal();
+      renderApp();
+    } else {
+      // No remote save yet — push whatever we currently have (local or default).
+      await pushRemoteState();
+    }
+  } catch (err) {
+    console.error("Error pulling remote state:", err);
+    setSyncStatus('error', 'الحالة: تعذر تحميل البيانات السحابية 🔴');
+  }
+}
+ 
+async function pushRemoteState() {
+  if (!supabaseClient || !supabaseUser) return;
+  showSyncToast('saving');
+  try {
+    const { error } = await supabaseClient
+      .from('game_saves')
+      .upsert({
+        user_id: supabaseUser.id,
+        state: gameState,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'user_id' });
+ 
+    if (error) throw error;
+    showSyncToast('saved');
+  } catch (err) {
+    console.error("Error pushing state to Supabase:", err);
+    showSyncToast('error');
+  }
+}
+ 
+function queueRemoteSync() {
+  if (!supabaseClient) return;
+  clearTimeout(syncDebounceTimer);
+  syncDebounceTimer = setTimeout(pushRemoteState, 800);
+}
+ 
+function saveSupabaseConfig() {
+  const url = document.getElementById('supabase-url').value.trim();
+  const key = document.getElementById('supabase-key').value.trim();
+ 
+  if (!url || !key) {
+    alert("يرجى إدخال الرابط والمفتاح بشكل صحيح.");
+    return;
+  }
+ 
+  localStorage.setItem(LOCAL_SUPA_URL_KEY, url);
+  localStorage.setItem(LOCAL_SUPA_KEY_KEY, key);
+  initSupabase(url, key);
+}
+ 
+async function disconnectSupabase() {
+  if (supabaseClient) {
+    try { await supabaseClient.auth.signOut(); } catch (e) { /* ignore */ }
+  }
+  supabaseClient = null;
+  supabaseUser = null;
+  localStorage.removeItem(LOCAL_SUPA_URL_KEY);
+  localStorage.removeItem(LOCAL_SUPA_KEY_KEY);
+  document.getElementById('supabase-url').value = '';
+  document.getElementById('supabase-key').value = '';
+  setSyncStatus('idle', 'الحالة: غير متصل (يعمل محلياً فقط)');
+}
+ 
+/* Master save: always write locally, and sync to the cloud if configured */
+function saveState() {
+  persistLocal();
+  renderApp();
+  queueRemoteSync();
+}
+ 
+/* ==========================================
+   4. UI RENDER ENGINE
+========================================== */
+function renderApp() {
+  document.getElementById('hero-username').innerText = gameState.user.name;
+  document.getElementById('sidebar-username').innerText = gameState.user.name;
+  document.getElementById('hero-lvl-badge').innerText = `LVL ${gameState.user.level}`;
+  document.getElementById('sidebar-level-text').innerText = `LVL ${gameState.user.level} AGENT`;
+  document.getElementById('hero-streak').innerText = `${gameState.user.streak} DAYS`;
+  document.getElementById('mobile-streak-count').innerText = `${gameState.user.streak} أيام`;
+ 
+  const xpPct = Math.min(100, Math.floor((gameState.user.xp / gameState.user.nextLevelXp) * 100));
+  document.getElementById('xp-bar-fill').style.width = `${xpPct}%`;
+  document.getElementById('xp-text-counter').innerText = `${gameState.user.xp.toLocaleString()} / ${gameState.user.nextLevelXp.toLocaleString()} XP`;
+ 
+  renderSkills();
+  renderQuests();
+  renderBoss();
+}
+ 
+function renderSkills() {
+  const dashGrid = document.getElementById('dashboard-skills-grid');
+  const fullGrid = document.getElementById('skills-full-grid');
+ 
+  dashGrid.innerHTML = '';
+  fullGrid.innerHTML = '';
+ 
+  gameState.skills.forEach(skill => {
+    const pct = Math.floor((skill.xp / skill.maxXp) * 100);
+ 
+    dashGrid.innerHTML += `
+      <div class="glass-card p-4 rounded-xl flex items-center space-x-3 space-x-reverse border-cyber-border">
+        <div class="w-10 h-10 rounded-lg bg-slate-900 border ${skill.border} flex items-center justify-center ${skill.color} shrink-0">
+          <i class="fa-solid ${skill.icon}"></i>
+        </div>
+        <div class="flex-1 overflow-hidden">
+          <div class="flex justify-between text-xs font-bold mb-1">
+            <span class="truncate">${skill.name}</span>
+            <span class="text-slate-400 font-mono shrink-0">Lvl ${skill.level}</span>
+          </div>
+          <div class="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden">
+            <div class="bg-white h-full" style="width: ${pct}%;"></div>
+          </div>
+        </div>
+      </div>
+    `;
+ 
+    fullGrid.innerHTML += `
+      <div class="glass-card p-5 rounded-2xl border-cyber-border space-y-3">
+        <div class="flex justify-between items-center gap-3">
+          <div class="flex items-center space-x-3 space-x-reverse min-w-0">
+            <div class="w-12 h-12 rounded-xl bg-slate-900 border ${skill.border} flex items-center justify-center ${skill.color} text-xl shrink-0">
+              <i class="fa-solid ${skill.icon}"></i>
+            </div>
+            <div class="min-w-0">
+              <h4 class="font-bold text-base text-white truncate">${skill.name}</h4>
+              <span class="text-xs text-slate-400">المستوى الحالي: ${skill.level}</span>
+            </div>
+          </div>
+          <span class="text-xs font-mono px-2 py-1 bg-slate-800 rounded text-cyber-cyan shrink-0">${pct}%</span>
+        </div>
+        <div class="space-y-1">
+          <div class="w-full bg-slate-950 h-3 rounded-full overflow-hidden border border-slate-800">
+            <div class="bg-gradient-to-r from-cyber-cyan to-cyber-magenta h-full" style="width: ${pct}%;"></div>
+          </div>
+          <div class="flex justify-between text-[10px] text-slate-500 font-mono">
+            <span>${skill.xp} XP</span>
+            <span>${skill.maxXp} XP للترقية</span>
+          </div>
+        </div>
+      </div>
+    `;
+  });
+}
+ 
+function renderQuests() {
+  const dashList = document.getElementById('dashboard-quests-list');
+  const allContainer = document.getElementById('all-quests-container');
+ 
+  dashList.innerHTML = '';
+  allContainer.innerHTML = '';
+ 
+  gameState.quests.forEach(quest => {
+    const questHtml = `
+      <div class="glass-card p-4 rounded-xl border-cyber-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition hover:border-slate-700">
+        <div class="flex items-center space-x-3 space-x-reverse min-w-0">
+          <div class="w-8 h-8 rounded-lg ${quest.completed ? 'bg-slate-800 text-slate-600' : 'bg-cyber-yellow/10 text-cyber-yellow'} flex items-center justify-center shrink-0">
+            <i class="fa-solid ${quest.completed ? 'fa-check' : 'fa-bolt'}"></i>
+          </div>
+          <div class="min-w-0">
+            <h4 class="font-bold text-sm ${quest.completed ? 'line-through text-slate-500' : 'text-white'} truncate">${quest.title}</h4>
+            <div class="flex items-center space-x-2 space-x-reverse text-[10px] text-slate-400 mt-0.5">
+              <span class="text-cyber-cyan font-mono">+${quest.xp} XP</span>
+              <span>•</span>
+              <span>المهارة: ${quest.skill}</span>
+            </div>
+          </div>
+        </div>
+ 
+        <button onclick="completeQuest(${quest.id})" ${quest.completed ? 'disabled' : ''}
+          class="w-full sm:w-auto px-4 py-2 rounded-xl text-xs font-bold font-orbitron transition shrink-0 ${quest.completed ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-cyber-cyan/10 border border-cyber-cyan text-cyber-cyan hover:bg-cyber-cyan hover:text-black shadow-neon-cyan'}">
+          ${quest.completed ? 'مكتملة' : 'إنجاز المهمة'}
+        </button>
+      </div>
+    `;
+ 
+    if (!quest.completed) {
+      dashList.innerHTML += questHtml;
+    }
+    allContainer.innerHTML += questHtml;
+  });
+ 
+  if (dashList.innerHTML === '') {
+    dashList.innerHTML = `<div class="text-xs text-slate-500 text-center py-4">تم إنجاز جميع مهام اليوم! 🔥</div>`;
+  }
+  if (allContainer.innerHTML === '') {
+    allContainer.innerHTML = `<div class="text-xs text-slate-500 text-center py-8">لا توجد مهام بعد — أضف أول مهمة لك!</div>`;
+  }
+}
+ 
+function renderBoss() {
+  const pct = Math.floor((gameState.boss.hp / gameState.boss.maxHp) * 100);
+ 
+  document.getElementById('boss-hp-text').innerText = `${gameState.boss.hp.toLocaleString()} / ${gameState.boss.maxHp.toLocaleString()} HP`;
+  document.getElementById('boss-hp-bar').style.width = `${pct}%`;
+ 
+  // Mini boss widget on the dashboard
+  document.getElementById('boss-hp-text-mini').innerText = `${gameState.boss.hp.toLocaleString()} / ${gameState.boss.maxHp.toLocaleString()} HP`;
+  document.getElementById('boss-hp-bar-mini').style.width = `${pct}%`;
+}
+ 
+/* ==========================================
+   5. GAME ACTIONS & LOGIC
+========================================== */
+function completeQuest(id) {
+  const quest = gameState.quests.find(q => q.id === id);
+  if (!quest || quest.completed) return;
+ 
+  quest.completed = true;
+  addXp(quest.xp);
+ 
+  const skill = gameState.skills.find(s => s.id === quest.skill || s.name.includes(quest.skill));
+  if (skill) {
+    skill.xp += Math.floor(quest.xp / 2);
+    if (skill.xp >= skill.maxXp) {
+      skill.level += 1;
+      skill.xp -= skill.maxXp;
+    }
+  }
+ 
+  triggerParticles();
+  saveState();
+}
+ 
+function addXp(amount) {
+  gameState.user.xp += amount;
+  if (gameState.user.xp >= gameState.user.nextLevelXp) {
+    gameState.user.level += 1;
+    gameState.user.xp -= gameState.user.nextLevelXp;
+    gameState.user.nextLevelXp += 1000;
+    showLevelUpModal(gameState.user.level);
+  }
+}
+ 
+function attackBoss(damage) {
+  if (gameState.boss.hp <= 0) return;
+  gameState.boss.hp = Math.max(0, gameState.boss.hp - damage);
+  addXp(300);
+  triggerParticles();
+  saveState();
+}
+ 
+function toggleNewQuestForm() {
+  document.getElementById('new-quest-form').classList.toggle('hidden');
+}
+ 
+function createNewQuest() {
+  const title = document.getElementById('quest-input-title').value.trim();
+  const xp = parseInt(document.getElementById('quest-input-xp').value, 10) || 100;
+  const skill = document.getElementById('quest-input-skill').value;
+  const type = document.getElementById('quest-input-type').value;
+ 
+  if (!title) {
+    alert("يرجى إدخال عنوان المهمة");
+    return;
+  }
+ 
+  gameState.quests.push({ id: Date.now(), title, xp, skill, type, completed: false });
+ 
+  document.getElementById('quest-input-title').value = '';
+  document.getElementById('quest-input-xp').value = '';
+  toggleNewQuestForm();
+  saveState();
+}
+ 
+function showLevelUpModal(level) {
+  document.getElementById('modal-new-level').innerText = level;
+  const modal = document.getElementById('level-up-modal');
+  modal.classList.remove('hidden');
+  modal.classList.add('flex');
+  triggerParticles();
+}
+ 
+function closeLevelUpModal() {
+  const modal = document.getElementById('level-up-modal');
+  modal.classList.add('hidden');
+  modal.classList.remove('flex');
+}
+ 
+/* ==========================================
+   6. NAVIGATION & TABS
+========================================== */
+function switchTab(tabId) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+  document.getElementById(`tab-${tabId}`).classList.remove('hidden');
+ 
+  document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('nav-btn-active'));
+  const activeNav = document.querySelector(`.nav-btn[data-nav="${tabId}"]`);
+  if (activeNav) activeNav.classList.add('nav-btn-active');
+ 
+  document.querySelectorAll('.mobile-nav-btn').forEach(btn => btn.classList.remove('mobile-nav-btn-active'));
+  const activeMobileNav = document.querySelector(`.mobile-nav-btn[data-mobile-nav="${tabId}"]`);
+  if (activeMobileNav) activeMobileNav.classList.add('mobile-nav-btn-active');
+ 
+  // Scroll main content back to top on tab change (mobile-friendly)
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+ 
+/* ==========================================
+   7. PARTICLE ANIMATION ENGINE
+========================================== */
+const canvas = document.getElementById('particle-canvas');
+const ctx = canvas.getContext('2d');
+let particles = [];
+const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+ 
+function resizeCanvas() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = window.innerWidth * dpr;
+  canvas.height = window.innerHeight * dpr;
+  canvas.style.width = `${window.innerWidth}px`;
+  canvas.style.height = `${window.innerHeight}px`;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+ 
+function triggerParticles() {
+  if (prefersReducedMotion) return; // respect accessibility preference
+  const count = window.innerWidth < 640 ? 26 : 50; // lighter effect on small/low-power devices
+  for (let i = 0; i < count; i++) {
+    particles.push({
+      x: window.innerWidth / 2,
+      y: window.innerHeight / 2,
+      vx: (Math.random() - 0.5) * 12,
+      vy: (Math.random() - 0.5) * 12,
+      color: Math.random() > 0.5 ? '#00f0ff' : '#ff007f',
+      size: Math.random() * 4 + 2,
+      alpha: 1
+    });
+  }
+}
+ 
+function updateParticles() {
+  ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+  particles.forEach((p, index) => {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.alpha -= 0.02;
+ 
+    ctx.globalAlpha = Math.max(0, p.alpha);
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    ctx.fill();
+ 
+    if (p.alpha <= 0) particles.splice(index, 1);
+  });
+  requestAnimationFrame(updateParticles);
+}
+updateParticles();
+ 
+/* ==========================================
+   8. BOOTSTRAPPING
+========================================== */
+function boot() {
+  loadLocalState();
+  renderApp();
+ 
+  const savedUrl = localStorage.getItem(LOCAL_SUPA_URL_KEY);
+  const savedKey = localStorage.getItem(LOCAL_SUPA_KEY_KEY);
+  if (savedUrl && savedKey) {
+    document.getElementById('supabase-url').value = savedUrl;
+    document.getElementById('supabase-key').value = savedKey;
+    initSupabase(savedUrl, savedKey);
+  }
+}
+ 
+boot();
