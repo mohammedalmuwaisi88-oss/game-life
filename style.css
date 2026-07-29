@@ -1,3 +1,10 @@
+/* ==========================================
+   BASE
+========================================== */
+html {
+  -webkit-text-size-adjust: 100%;
+}
+ 
 body {
   background-color: #070a12;
   color: #f8fafc;
@@ -5,15 +12,19 @@ body {
     radial-gradient(circle at 15% 15%, rgba(0, 240, 255, 0.05) 0%, transparent 40%),
     radial-gradient(circle at 85% 85%, rgba(255, 0, 127, 0.05) 0%, transparent 40%);
   background-attachment: fixed;
+  overflow-x: hidden;
 }
-
+ 
+/* ==========================================
+   GLASS CARD
+========================================== */
 .glass-card {
   background: rgba(15, 23, 42, 0.7);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
-
+ 
 .glass-card-hover {
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -22,12 +33,49 @@ body {
   transform: translateY(-2px);
   box-shadow: 0 8px 25px rgba(0, 240, 255, 0.15);
 }
-
+ 
 .xp-glow {
   box-shadow: 0 0 12px #00f0ff;
 }
-
-/* Custom Scrollbar */
+ 
+/* ==========================================
+   NAVIGATION STATES (desktop sidebar)
+========================================== */
+.nav-btn {
+  color: #94a3b8; /* slate-400 */
+}
+.nav-btn:hover {
+  color: #ffffff;
+  background: rgba(30, 41, 59, 0.5);
+}
+.nav-btn-active,
+.nav-btn-active:hover {
+  color: #00f0ff;
+  background: rgba(0, 240, 255, 0.1);
+  border: 1px solid rgba(0, 240, 255, 0.3);
+}
+ 
+/* ==========================================
+   MOBILE BOTTOM NAV
+========================================== */
+.mobile-nav-btn {
+  color: #94a3b8;
+  transition: color 0.2s ease;
+}
+.mobile-nav-btn-active {
+  color: #00f0ff;
+}
+ 
+/* Respect iPhone home-indicator / notch safe areas */
+.mobile-nav-safe-area {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+  padding-left: max(0.5rem, env(safe-area-inset-left));
+  padding-right: max(0.5rem, env(safe-area-inset-right));
+}
+ 
+/* ==========================================
+   SCROLLBAR
+========================================== */
 ::-webkit-scrollbar {
   width: 6px;
 }
@@ -41,7 +89,10 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #00f0ff;
 }
-
+ 
+/* ==========================================
+   ANIMATIONS
+========================================== */
 @keyframes pulse-glow {
   0%, 100% { filter: drop-shadow(0 0 5px #00f0ff); }
   50% { filter: drop-shadow(0 0 15px #00f0ff); }
@@ -49,17 +100,37 @@ body {
 .animate-glow {
   animation: pulse-glow 2.5s infinite;
 }
-
-@keyframes bounce-short {
-  0% { transform: scale(0.9); opacity: 0; }
-  60% { transform: scale(1.03); opacity: 1; }
-  100% { transform: scale(1); opacity: 1; }
+ 
+@keyframes modal-pop {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
 }
-.animate-bounce-short {
-  animation: bounce-short 0.35s ease-out forwards;
+#level-up-modal.flex > div {
+  animation: modal-pop 0.25s ease-out;
 }
-
-/* Particle effect canvas overlay */
+ 
+/* Respect users who prefer less motion */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+ 
+/* ==========================================
+   ACCESSIBILITY: visible keyboard focus
+========================================== */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid #00f0ff;
+  outline-offset: 2px;
+}
+ 
+/* ==========================================
+   PARTICLE CANVAS OVERLAY
+========================================== */
 #particle-canvas {
   position: fixed;
   top: 0;
@@ -69,3 +140,18 @@ body {
   pointer-events: none;
   z-index: 40;
 }
+ 
+/* ==========================================
+   SMALL-SCREEN REFINEMENTS
+========================================== */
+@media (max-width: 380px) {
+  .font-orbitron {
+    letter-spacing: 0.02em;
+  }
+}
+ 
+/* Prevent horizontal scroll from long English tokens/keys inside inputs */
+input[dir="ltr"] {
+  text-align: left;
+}
+ 
